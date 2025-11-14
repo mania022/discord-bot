@@ -192,41 +192,14 @@ async def sample(interaction: discord.Interaction):
         traceback.print_exc()
 
 # === Spotify Helpers ===
-async def get_spotify_token():
-    auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
-    b64_auth = base64.b64encode(auth_str.encode()).decode()
-    headers = {"Authorization": f"Basic {b64_auth}", "Content-Type": "application/x-www-form-urlencoded"}
-    data = {"grant_type": "client_credentials"}
-    async with aiohttp.ClientSession() as session:
-        async with session.post("https://accounts.spotify.com/api/token", headers=headers, data=data) as resp:
-            token_data = await resp.json()
-            return token_data.get("access_token")
-
-async def get_artist_id_from_url(url: str):
-    try:
-        return url.split("artist/")[1].split("?")[0]
-    except:
-        return None
-
-async def fetch_artist_albums(token, artist_id):
-    # include albums, singles, eps, compilations
-    url = f"https://api.spotify.com/v1/artists/{artist_id}/albums?limit=50&include_groups=album,single,appears_on,compilation"
-    headers = {"Authorization": f"Bearer {token}"}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            return await resp.json()
-
-async def fetch_album_tracks(token, album_id):
-    url = f"https://api.spotify.com/v1/albums/{album_id}/tracks?limit=50"
-    headers = {"Authorization": f"Bearer {token}"}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            return await resp.json()
-
-# === /discography_spotify (scrolling messages, no links, includes singles & eps) ===
-@bot.tree.command(name="discography_spotify", description="Spotify discography (albums, singles, EPs, compilations)")
+# === /discography_spotify (full-sized album cover before tracklist) ===
+@bot.tree.command(
+    name="discography_spotify",
+    description="Spotify discography (full-size album cover + tracklist)"
+)
 async def discography_spotify(interaction: discord.Interaction, artist_url: str):
     await interaction.response.defer(thinking=True)
+
     try:
         artist_id = await get_artist_id_from_url(artist_url)
         if not artist_id:
@@ -234,11 +207,13 @@ async def discography_spotify(interaction: discord.Interaction, artist_url: str)
             return
 
         token = await get_spotify_token()
-        albums_data = await fetch_artist_albums(token, artist_id)
-        albums = albums_data.get("items", [])
+        albums = await fetch_artist_albums(token, artist_id)
+
+        # Sort newest → oldest
         albums.sort(key=lambda a: a.get("release_date", "0"), reverse=True)
+
         if not albums:
-            await interaction.followup.send("❌ No releases found for this artist.")
+            await interaction.followup.send("❌ No albums, singles, or EPs found.")
             return
 
         for album in albums:
@@ -247,21 +222,40 @@ async def discography_spotify(interaction: discord.Interaction, artist_url: str)
             album_type = album.get("album_type", "album").capitalize()
             album_id = album["id"]
 
+            # Full cover image
+            album_images = album.get("images", [])
+            album_cover_url = album_images[0]["url"] if album_images else None
+
+            # Get tracklist
             tracks_data = await fetch_album_tracks(token, album_id)
             tracks = tracks_data.get("items", [])
 
+            # Build tracklist
             tracklist_text = ""
             for idx, track in enumerate(tracks, start=1):
-                track_name = track["name"]
-                tracklist_text += f"{idx}. {track_name}\n"
+                tracklist_text += f"{idx}. {track['name']}\n"
 
-            await interaction.followup.send(f"📀 **{album_name} ({release_year}) [{album_type}])**")
+            # Embed with full-sized album cover
+            embed = discord.Embed(
+                title=f"{album_name} ({release_year}) — {album_type}",
+                color=discord.Color.green()
+            )
+
+            # FULL-SIZE album image
+            if album_cover_url:
+                embed.set_image(url=album_cover_url)
+
+            # Send the album embed (cover image appears BEFORE tracklist)
+            await interaction.followup.send(embed=embed)
+
+            # Send the tracklist in codeblock chunks
             for chunk in split_long_text(tracklist_text):
                 await interaction.followup.send(f"```{chunk}```")
 
     except Exception as e:
         await interaction.followup.send("❌ Error fetching Spotify discography.")
         traceback.print_exc()
+
 
 # === /discography_ytmusic (scrolling messages, no links) ===
 @bot.tree.command(name="discography_ytmusic", description="YouTube Music discography (album + tracklist only)")
@@ -294,4 +288,5 @@ keep_alive()
 
 # === Run Bot ===
 bot.run(DISCORD_TOKEN)
+
 
