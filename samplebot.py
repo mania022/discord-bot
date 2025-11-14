@@ -29,8 +29,9 @@ import base64
 
 # === CONFIGURATION / INSERT YOUR INFO HERE ===
 
-# Discord Bot Token
-DISCORD_TOKEN = "MTQzODIxNDMzMDE2MzI2NTYxNw.GRyGAi.CABe4dwRg8aQjXXh3N8onRQ26VV8cYXintNMzk"  # e.g. "MzI1NjYxNDM1Njk4ODU2.XYZabc..."
+import os
+DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
+  # e.g. "MzI1NjYxNDM1Njk4ODU2.XYZabc..."
 
 # YouTube Data API Key
 YOUTUBE_API_KEY = "AIzaSyC6pDqBKUc7Ijs_OgRPR1aLudckx98uqYs"  # e.g. "AIzaSyA...XYZ"
@@ -289,6 +290,8 @@ async def discography_ytmusic(interaction: discord.Interaction, artist_name: str
     except Exception as e:
         await interaction.followup.send("❌ Error fetching YouTube Music discography.")
         traceback.print_exc()
+keep_alive()
 
 # === Run Bot ===
 bot.run(DISCORD_TOKEN)
+
