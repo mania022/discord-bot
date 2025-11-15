@@ -1,5 +1,7 @@
+# === KEEP-ALIVE FOR RENDER ===
 from flask import Flask
 from threading import Thread
+import os
 
 app = Flask('')
 
@@ -8,27 +10,28 @@ def home():
     return "Bot is running!"
 
 def run_web():
-    app.run(host="0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", 8080))  # Render provides PORT env variable
+    app.run(host="0.0.0.0", port=port)
 
 def keep_alive():
     thread = Thread(target=run_web)
     thread.start()
 
+keep_alive()
 
+# === IMPORTS ===
 import discord
 from discord import app_commands
 import aiohttp
 import asyncio
 import random
 import json
-import os
 import time
 import traceback
 from ytmusicapi import YTMusic
 import base64
 
-# === CONFIGURATION / INSERT YOUR INFO HERE ===
-
+# === CONFIGURATION ===
 import os
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
   # e.g. "MzI1NjYxNDM1Njk4ODU2.XYZabc..."
@@ -56,7 +59,7 @@ CACHE_EXPIRY = 60 * 60 * 6  # 6 hours
 
 ytmusic = YTMusic()
 
-# === Helper to split long messages ===
+# === HELPER TO SPLIT LONG TEXT ===
 def split_long_text(text, limit=2000):
     lines = text.split("\n")
     chunks = []
@@ -70,7 +73,7 @@ def split_long_text(text, limit=2000):
         chunks.append(current)
     return chunks
 
-# === BOT SETUP ===
+# === DISCORD BOT SETUP ===
 class SampleBot(discord.Client):
     def __init__(self):
         super().__init__(intents=discord.Intents.default())
@@ -90,7 +93,7 @@ bot = SampleBot()
 async def on_ready():
     print(f"🎶 Logged in as {bot.user}")
 
-# === Cache Helpers ===
+# === CACHE HELPERS ===
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -104,7 +107,7 @@ def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)
 
-# === YouTube Fetching ===
+# === YOUTUBE VIDEO FETCHING ===
 async def fetch_channel_uploads(session, channel_id):
     try:
         channel_api = f"https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id={channel_id}&key={YOUTUBE_API_KEY}"
@@ -142,7 +145,7 @@ async def fetch_all_channels():
             await asyncio.sleep(0.5)
         return all_videos
 
-# === Commands: /turnon & /sample ===
+# === /turnon COMMAND ===
 @bot.tree.command(name="turnon", description="⚡ Fetch YouTube videos from all configured channels")
 async def turnon(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
@@ -158,7 +161,8 @@ async def turnon(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Error fetching videos: {e}")
         traceback.print_exc()
 
-@bot.tree.command(name="sample", description="🎧 Send a random video from the fetched list")
+# === /sample COMMAND ===
+@bot.tree.command(name="sample", description="🎧 Send a random video from the cached list")
 async def sample(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     try:
@@ -177,8 +181,8 @@ async def sample(interaction: discord.Interaction):
             return
         title = snippet.get("title", "Unknown Title")
         channel_name = snippet.get("videoOwnerChannelTitle", "Unknown Channel")
-        url = f"https://www.youtube.com/watch?v={video_id}"
         thumbnail = snippet.get("thumbnails", {}).get("high", {}).get("url")
+        url = f"https://www.youtube.com/watch?v={video_id}"
         embed = discord.Embed(
             title=title,
             description=f"👤 **{channel_name}**\n🎥 [Watch on YouTube]({url})",
@@ -191,18 +195,17 @@ async def sample(interaction: discord.Interaction):
         await interaction.followup.send(f"⚠️ An internal error occurred: {type(e).__name__}")
         traceback.print_exc()
 
-# === Spotify Helpers ===
+# === YOUTUBE MUSIC SETUP ===
+ytmusic = YTMusic()
 
-# Extract artist ID from Spotify URL
+# === SPOTIFY HELPERS ===
 async def get_artist_id_from_url(url: str):
     try:
         return url.split("artist/")[1].split("?")[0]
     except:
         return None
 
-# Get Spotify API token (Client Credentials Flow)
 async def get_spotify_token():
-    import base64
     auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
     b64_auth = base64.b64encode(auth_str.encode()).decode()
     headers = {"Authorization": f"Basic {b64_auth}", "Content-Type": "application/x-www-form-urlencoded"}
@@ -212,34 +215,27 @@ async def get_spotify_token():
             token_data = await resp.json()
             return token_data.get("access_token")
 
-# Fetch albums for an artist (Albums, Singles, EPs only, filtered for main artist)
 async def fetch_artist_albums(token, artist_id):
     url = f"https://api.spotify.com/v1/artists/{artist_id}/albums?limit=50&include_groups=album,single"
     headers = {"Authorization": f"Bearer {token}"}
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             data = await resp.json()
-
     albums = data.get("items", [])
-
-    # Filter to only main-artist releases
     filtered = []
     for album in albums:
         artist_ids = [art["id"] for art in album.get("artists", [])]
         if artist_id in artist_ids:
             filtered.append(album)
-
-    # Remove duplicate album names (Spotify often returns multiple markets)
+    # Remove duplicates
     seen = set()
     unique_albums = []
     for a in filtered:
         if a["name"] not in seen:
             seen.add(a["name"])
             unique_albums.append(a)
-
     return unique_albums
 
-# Fetch tracklist for an album
 async def fetch_album_tracks(token, album_id):
     url = f"https://api.spotify.com/v1/albums/{album_id}/tracks?limit=50"
     headers = {"Authorization": f"Bearer {token}"}
@@ -247,72 +243,72 @@ async def fetch_album_tracks(token, album_id):
         async with session.get(url, headers=headers) as resp:
             return await resp.json()
 
-
-# === /discography_spotify Command ===
-@bot.tree.command(
-    name="discography_spotify",
-    description="Spotify discography (full-size album cover + tracklist)"
-)
+# === /discography_spotify COMMAND ===
+@bot.tree.command(name="discography_spotify", description="Spotify discography with full-size album covers")
 async def discography_spotify(interaction: discord.Interaction, artist_url: str):
     await interaction.response.defer(thinking=True)
-
     try:
         artist_id = await get_artist_id_from_url(artist_url)
         if not artist_id:
             await interaction.followup.send("❌ Invalid Spotify artist URL.")
             return
-
         token = await get_spotify_token()
         albums = await fetch_artist_albums(token, artist_id)
-
-        # Sort newest → oldest
         albums.sort(key=lambda a: a.get("release_date", "0"), reverse=True)
-
         if not albums:
             await interaction.followup.send("❌ No albums, singles, or EPs found.")
             return
-
-        # Send each album separately
         for album in albums:
             album_name = album["name"]
             release_year = album.get("release_date", "????")[:4]
             album_type = album.get("album_type", "album").capitalize()
             album_id = album["id"]
-
-            # Full-size album cover
             album_images = album.get("images", [])
             album_cover_url = album_images[0]["url"] if album_images else None
-
-            # Fetch tracklist
             tracks_data = await fetch_album_tracks(token, album_id)
             tracks = tracks_data.get("items", [])
-
             tracklist_text = ""
             for idx, track in enumerate(tracks, start=1):
                 tracklist_text += f"{idx}. {track['name']}\n"
-
-            # Embed with full-size cover
             embed = discord.Embed(
                 title=f"{album_name} ({release_year}) — {album_type}",
                 color=discord.Color.green()
             )
             if album_cover_url:
                 embed.set_image(url=album_cover_url)
-
-            # Send embed
             await interaction.followup.send(embed=embed)
-
-            # Send tracklist in code block chunks
             for chunk in split_long_text(tracklist_text):
                 await interaction.followup.send(f"```{chunk}```")
 
-    except Exception as e:
-        await interaction.followup.send("❌ Error fetching Spotify discography.")
-        traceback.print_exc()
+# === /discography_ytmusic COMMAND ===
+@bot.tree.command(name="discography_ytmusic", description="YouTube Music discography")
+async def discography_ytmusic(interaction: discord.Interaction, artist_name: str):
+    await interaction.response.defer(thinking=True)
+    try:
+        search_results = ytmusic.search(artist_name, filter="albums")
+        if not search_results:
+            await interaction.followup.send("❌ No albums found on YouTube Music.")
+            return
+        for album in search_results:
+            album_title = album.get("title", "Unknown Album")
+            album_id = album.get("browseId")
+            album_info = ytmusic.get_album(album_id)
+            album_tracks = album_info.get("tracks", [])
+            album_cover_url = album_info.get("thumbnails", [{}])[-1].get("url")
+            # Send album embed with full cover
+            embed = discord.Embed(
+                title=f"{album_title}",
+                color=discord.Color.blue()
+            )
+            if album_cover_url:
+                embed.set_image(url=album_cover_url)
+            await interaction.followup.send(embed=embed)
+            # Tracklist
+            tracklist_text = ""
+            for idx, track in enumerate(album_tracks, start=1):
+                tracklist_text += f"{idx}. {track.get('title','Unknown Track')}\n"
+            for chunk in split_long_text(tracklist_text):
+                await interaction.followup.send(f"```{chunk}```")
 
-
-# === Run Bot ===
+# === RUN BOT ===
 bot.run(DISCORD_TOKEN)
-
-
-
