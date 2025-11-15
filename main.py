@@ -26,6 +26,7 @@ def keep_alive():
     thread = Thread(target=run_web)
     thread.start()
 
+
 # === CONFIG ===
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 YOUTUBE_API_KEY = "AIzaSyC6pDqBKUc7Ijs_OgRPR1aLudckx98uqYs"
@@ -33,7 +34,7 @@ YOUTUBE_API_KEY = "AIzaSyC6pDqBKUc7Ijs_OgRPR1aLudckx98uqYs"
 SPOTIFY_CLIENT_ID = os.environ["SPOTIFY_CLIENT_ID"]
 SPOTIFY_CLIENT_SECRET = os.environ["SPOTIFY_CLIENT_SECRET"]
 
-GUILD_ID = 1429281076190117912
+GUILD_ID = 1429281076190117912  # Your server ID
 
 CHANNELS = {
     "andrenavarroII": "UCv5OAW45h67CJEY6kJLyisg",
@@ -61,17 +62,23 @@ def split_long_text(text, limit=2000):
     return chunks
 
 
-# === BOT ===
+# === BOT SETUP ===
 class SampleBot(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.dm_messages = True
+        super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.videos_cache = []
 
     async def setup_hook(self):
+        # Sync commands to your server
         guild = discord.Object(id=GUILD_ID)
         await self.tree.sync(guild=guild)
-        print("Commands synced!")
+        # Sync globally for DMs & other servers
+        await self.tree.sync()
+        print("✅ Commands synced (guild + global)!")
 
 
 bot = SampleBot()
@@ -79,10 +86,10 @@ bot = SampleBot()
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    print(f"🎶 Logged in as {bot.user}")
 
 
-# === Cache ===
+# === Cache Helpers ===
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -92,12 +99,13 @@ def load_cache():
             return {}
     return {}
 
+
 def save_cache(cache):
     with open(CACHE_FILE, "w") as f:
         json.dump(cache, f, indent=2)
 
 
-# === YouTube Fetch ===
+# === YouTube Fetch Helpers ===
 async def fetch_channel_uploads(session, channel_id):
     try:
         channel_api = f"https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id={channel_id}&key={YOUTUBE_API_KEY}"
@@ -128,7 +136,8 @@ async def fetch_channel_uploads(session, channel_id):
                 break
 
         return videos
-    except:
+    except Exception as e:
+        print(f"⚠️ Error fetching channel {channel_id}: {e}")
         return []
 
 
@@ -136,13 +145,14 @@ async def fetch_all_channels():
     async with aiohttp.ClientSession() as session:
         all_videos = []
         for name, channel_id in CHANNELS.items():
+            print(f"📡 Fetching videos from {name}...")
             vids = await fetch_channel_uploads(session, channel_id)
             all_videos.extend(vids)
             await asyncio.sleep(0.5)
         return all_videos
 
 
-# === /turnon ===
+# === /turnon command ===
 @bot.tree.command(name="turnon", description="Fetch all YouTube channel videos")
 async def turnon(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
@@ -154,13 +164,13 @@ async def turnon(interaction: discord.Interaction):
         bot.videos_cache = videos
         save_cache({"time": time.time(), "videos": videos})
 
-        await interaction.followup.send(f"Cached {len(videos)} videos!")
+        await interaction.followup.send(f"✅ Cached {len(videos)} videos!")
     except Exception as e:
         traceback.print_exc()
-        await interaction.followup.send("Error fetching videos.")
+        await interaction.followup.send("❌ Error fetching videos.")
 
 
-# === /sample ===
+# === /sample command ===
 @bot.tree.command(name="sample", description="Send a random video")
 async def sample(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
@@ -171,23 +181,23 @@ async def sample(interaction: discord.Interaction):
             bot.videos_cache = cache["videos"]
 
     if not bot.videos_cache:
-        return await interaction.followup.send("Run /turnon first.")
+        return await interaction.followup.send("⚠️ Run /turnon first.")
 
     video = random.choice(bot.videos_cache)
     snippet = video.get("snippet", {})
-    video_id = snippet.get("resourceId", {}).get("videoId")
+    video_id = snippet.get("resourceId", {}).get("videoId") or snippet.get("id", None)
 
     if not video_id:
-        return await interaction.followup.send("Invalid video in cache.")
+        return await interaction.followup.send("⚠️ Invalid video in cache.")
 
-    title = snippet.get("title")
-    channel = snippet.get("videoOwnerChannelTitle")
+    title = snippet.get("title", "Unknown Title")
+    channel = snippet.get("videoOwnerChannelTitle", "Unknown Channel")
     url = f"https://www.youtube.com/watch?v={video_id}"
     thumb = snippet.get("thumbnails", {}).get("high", {}).get("url")
 
     embed = discord.Embed(
         title=title,
-        description=f"By **{channel}**",
+        description=f"By **{channel}**\n🎥 [Watch on YouTube]({url})",
         color=discord.Color.red()
     )
     if thumb:
@@ -234,18 +244,17 @@ async def fetch_album_tracks(token, album_id):
             return (await r.json()).get("items", [])
 
 
-# === /discography_spotify ===
+# === /discography_spotify command ===
 @bot.tree.command(name="discography_spotify", description="Full Spotify discography with big album covers")
 async def discography_spotify(interaction: discord.Interaction, artist_url: str):
     await interaction.response.defer(thinking=True)
     try:
         artist_id = get_artist_id_from_url(artist_url)
         if not artist_id:
-            return await interaction.followup.send("Invalid Spotify artist URL.")
+            return await interaction.followup.send("❌ Invalid Spotify artist URL.")
 
         token = await get_spotify_token()
         albums = await fetch_artist_albums(token, artist_id)
-
         albums.sort(key=lambda a: a["release_date"], reverse=True)
 
         for album in albums:
@@ -271,10 +280,10 @@ async def discography_spotify(interaction: discord.Interaction, artist_url: str)
 
     except Exception as e:
         traceback.print_exc()
-        await interaction.followup.send("Error loading Spotify discography.")
+        await interaction.followup.send("❌ Error loading Spotify discography.")
 
 
-# === /discography_ytmusic ===
+# === /discography_ytmusic command ===
 @bot.tree.command(name="discography_ytmusic", description="Full YouTube Music discography with album covers")
 async def discography_ytmusic(interaction: discord.Interaction, artist_name: str):
     await interaction.response.defer(thinking=True)
@@ -289,9 +298,7 @@ async def discography_ytmusic(interaction: discord.Interaction, artist_name: str
             tracks = album_data.get("tracks", [])
             cover = album_data.get("thumbnails", [{}])[-1].get("url")
 
-            tracklist = "\n".join(
-                [f"{i+1}. {t.get('title', 'Unknown')}" for i, t in enumerate(tracks)]
-            )
+            tracklist = "\n".join([f"{i+1}. {t.get('title', 'Unknown')}" for i, t in enumerate(tracks)])
 
             embed = discord.Embed(
                 title=title,
@@ -307,9 +314,9 @@ async def discography_ytmusic(interaction: discord.Interaction, artist_name: str
 
     except Exception as e:
         traceback.print_exc()
-        await interaction.followup.send("Error loading YT Music discography.")
+        await interaction.followup.send("❌ Error loading YT Music discography.")
 
 
-# === Start bot ===
+# === Start Bot ===
 keep_alive()
 bot.run(DISCORD_TOKEN)
